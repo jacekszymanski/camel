@@ -16,46 +16,15 @@
  */
 package org.apache.camel.component.jslt;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.Serializable;
-import java.nio.charset.StandardCharsets;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-
-import com.fasterxml.jackson.databind.BeanDescription;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationConfig;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.ser.BeanSerializerModifier;
-import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.schibsted.spt.data.jslt.Expression;
-import com.schibsted.spt.data.jslt.Function;
-import com.schibsted.spt.data.jslt.JsltException;
-import com.schibsted.spt.data.jslt.Parser;
-import com.schibsted.spt.data.jslt.filters.DefaultJsonFilter;
-import com.schibsted.spt.data.jslt.filters.JsonFilter;
 import org.apache.camel.Category;
 import org.apache.camel.Exchange;
 import org.apache.camel.ExchangePattern;
-import org.apache.camel.Message;
-import org.apache.camel.ValidationException;
-import org.apache.camel.WrappedFile;
+import org.apache.camel.Processor;
 import org.apache.camel.component.ResourceEndpoint;
 import org.apache.camel.spi.UriEndpoint;
 import org.apache.camel.spi.UriParam;
-import org.apache.camel.support.ExchangeHelper;
-import org.apache.camel.support.ResourceHelper;
-import org.apache.camel.util.IOHelper;
 import org.apache.camel.util.ObjectHelper;
 
 /**
@@ -64,15 +33,6 @@ import org.apache.camel.util.ObjectHelper;
 @UriEndpoint(firstVersion = "3.1.0", scheme = "jslt", title = "JSLT", syntax = "jslt:resourceUri", producerOnly = true,
              category = { Category.TRANSFORMATION }, headersClass = JsltConstants.class)
 public class JsltEndpoint extends ResourceEndpoint {
-
-    private static final ObjectMapper OBJECT_MAPPER;
-    private static final JsonFilter DEFAULT_JSON_FILTER = new DefaultJsonFilter();
-
-    static {
-        OBJECT_MAPPER = new ObjectMapper();
-        OBJECT_MAPPER.setSerializerFactory(OBJECT_MAPPER.getSerializerFactory().withSerializerModifier(
-                new SafeTypesOnlySerializerModifier()));
-    }
 
     private Expression transform;
 
@@ -102,64 +62,6 @@ public class JsltEndpoint extends ResourceEndpoint {
         return "jslt:" + getResourceUri();
     }
 
-    private synchronized Expression getTransform(Message msg) throws Exception {
-        final String jsltStringFromHeader
-                = allowTemplateFromHeader ? msg.getHeader(JsltConstants.HEADER_JSLT_STRING, String.class) : null;
-
-        final boolean useTemplateFromUri = jsltStringFromHeader == null;
-
-        if (useTemplateFromUri && transform != null) {
-            return transform;
-        }
-
-        final Collection<Function> functions = Objects.requireNonNullElse(
-                ((JsltComponent) getComponent()).getFunctions(),
-                Collections.emptyList());
-
-        final JsonFilter objectFilter = Objects.requireNonNullElse(
-                ((JsltComponent) getComponent()).getObjectFilter(),
-                DEFAULT_JSON_FILTER);
-
-        final String transformSource;
-        final InputStream stream;
-
-        if (useTemplateFromUri) {
-            transformSource = getResourceUri();
-
-            if (log.isDebugEnabled()) {
-                log.debug("Jslt content read from resource {} with resourceUri: {} for endpoint {}",
-                        transformSource,
-                        transformSource,
-                        getEndpointUri());
-            }
-
-            stream = ResourceHelper.resolveMandatoryResourceAsInputStream(getCamelContext(), transformSource);
-            if (stream == null) {
-                throw new JsltException("Cannot load resource '" + transformSource + "': not found");
-            }
-        } else { // use template from header
-            stream = new ByteArrayInputStream(jsltStringFromHeader.getBytes(StandardCharsets.UTF_8));
-            transformSource = "<inline>";
-        }
-
-        final Expression transform;
-        try {
-            transform = new Parser(new InputStreamReader(stream))
-                    .withFunctions(functions)
-                    .withObjectFilter(objectFilter)
-                    .withSource(transformSource)
-                    .compile();
-        } finally {
-            // the stream is consumed only on .compile(), cannot be closed before
-            IOHelper.close(stream);
-        }
-
-        if (useTemplateFromUri) {
-            this.transform = transform;
-        }
-        return transform;
-    }
-
     public JsltEndpoint findOrCreateEndpoint(String uri, String newResourceUri) {
         String newUri = uri.replace(getResourceUri(), newResourceUri);
         log.debug("Getting endpoint with URI: {}", newUri);
@@ -185,77 +87,8 @@ public class JsltEndpoint extends ResourceEndpoint {
             return;
         }
 
-        JsonNode input;
+        getProcessor().process(exchange);
 
-        ObjectMapper objectMapper;
-        if (ObjectHelper.isEmpty(getObjectMapper())) {
-            objectMapper = new ObjectMapper();
-        } else {
-            objectMapper = getObjectMapper();
-        }
-        if (isMapBigDecimalAsFloats()) {
-            objectMapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-        }
-
-        Object body = exchange.getIn().getBody();
-        if (body instanceof WrappedFile) {
-            body = ((WrappedFile<?>) body).getFile();
-        }
-        if (body instanceof String) {
-            input = objectMapper.readTree((String) body);
-        } else if (body instanceof Reader) {
-            input = objectMapper.readTree((Reader) body);
-        } else if (body instanceof File) {
-            input = objectMapper.readTree((File) body);
-        } else if (body instanceof byte[]) {
-            input = objectMapper.readTree((byte[]) body);
-        } else if (body instanceof InputStream) {
-            input = objectMapper.readTree((InputStream) body);
-        } else {
-            throw new ValidationException(exchange, "Allowed body types are String, Reader, File, byte[] or InputStream.");
-        }
-
-        Map<String, JsonNode> variables = extractVariables(exchange);
-        JsonNode output = getTransform(exchange.getMessage()).apply(variables, input);
-
-        String result = isPrettyPrint() ? output.toPrettyString() : output.toString();
-        ExchangeHelper.setInOutBodyPatternAware(exchange, result);
-    }
-
-    /**
-     * Extract the variables from the headers in the message.
-     */
-    private Map<String, JsonNode> extractVariables(Exchange exchange) {
-        Map<String, Object> variableMap = ExchangeHelper.createVariableMap(exchange, isAllowContextMapAll());
-        Map<String, JsonNode> serializedVariableMap = new HashMap<>();
-        if (variableMap.containsKey("headers")) {
-            serializedVariableMap.put("headers", serializeMapToJsonNode((Map<String, Object>) variableMap.get("headers")));
-        }
-        if (variableMap.containsKey("exchange")) {
-            Exchange ex = (Exchange) variableMap.get("exchange");
-            ObjectNode exchangeNode = OBJECT_MAPPER.createObjectNode();
-            if (ex.getProperties() != null) {
-                exchangeNode.set("properties", serializeMapToJsonNode(ex.getProperties()));
-            }
-            serializedVariableMap.put("exchange", exchangeNode);
-        }
-        return serializedVariableMap;
-    }
-
-    private ObjectNode serializeMapToJsonNode(Map<String, Object> map) {
-        ObjectNode mapNode = OBJECT_MAPPER.createObjectNode();
-        for (Map.Entry<String, Object> entry : map.entrySet()) {
-            if (entry.getValue() != null) {
-                try {
-                    // Use Jackson to convert value to JsonNode
-                    mapNode.set(entry.getKey(), OBJECT_MAPPER.valueToTree(entry.getValue()));
-                } catch (IllegalArgumentException e) {
-                    //If Jackson cannot convert the value to json (e.g. infinite recursion in the value to serialize)
-                    log.debug("Value could not be converted to JsonNode", e);
-                }
-            }
-        }
-        return mapNode;
     }
 
     /**
@@ -305,31 +138,21 @@ public class JsltEndpoint extends ResourceEndpoint {
         this.objectMapper = objectMapper;
     }
 
-    private static class SafeTypesOnlySerializerModifier extends BeanSerializerModifier {
-        // Serialize only safe types: primitives, records, serializable objects and
-        // collections/maps/arrays of them. To avoid serializing something like Response object.
-        // Types that are not safe are serialized as their toString() value.
-        @Override
-        public JsonSerializer<?> modifySerializer(
-                SerializationConfig config, BeanDescription beanDesc,
-                JsonSerializer<?> serializer) {
-            final Class<?> beanClass = beanDesc.getBeanClass();
+    @Override
+    public Processor createProcessor() throws Exception {
+        final JsltProcessor processor = new JsltProcessor();
+        final JsltComponent component = (JsltComponent) getComponent();
+        processor.setAllowContextMapAll(isAllowContextMapAll());
+        processor.setAllowTemplateFromHeader(isAllowTemplateFromHeader());
+        processor.setPrettyPrint(isPrettyPrint());
+        processor.setMapBigDecimalAsFloats(isMapBigDecimalAsFloats());
+        processor.setObjectMapper(getObjectMapper());
+        processor.setResourceUri(getResourceUri());
 
-            if (Collection.class.isAssignableFrom(beanClass)
-                    || Map.class.isAssignableFrom(beanClass)
-                    || beanClass.isArray()
-                    || beanClass.isPrimitive()
-                    || isRecord(beanClass)
-                    || Serializable.class.isAssignableFrom(beanClass)) {
-                return serializer;
-            }
+        processor.setFunctions(component.getFunctions());
+        processor.setObjectFilter(component.getObjectFilter());
 
-            return ToStringSerializer.instance;
-        }
-
-        private static boolean isRecord(Class<?> clazz) {
-            final Class<?> parent = clazz.getSuperclass();
-            return parent != null && parent.getName().equals("java.lang.Record");
-        }
+        processor.setCamelContext(getCamelContext());
+        return processor;
     }
 }
