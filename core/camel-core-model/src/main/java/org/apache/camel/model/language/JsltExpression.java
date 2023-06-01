@@ -24,10 +24,10 @@ import javax.xml.bind.annotation.XmlTransient;
 import org.apache.camel.spi.Metadata;
 
 /**
- * Evaluates a JQ expression against a JSON message body.
+ * Evaluates a JSLT expression against a JSON message body.
  */
-@Metadata(firstVersion = "3.18.0", label = "language,json", title = "JQ")
-@XmlRootElement(name = "jq")
+@Metadata(firstVersion = "3.21.0", label = "language,json", title = "JSLT")
+@XmlRootElement(name = "jslt")
 @XmlAccessorType(XmlAccessType.FIELD)
 public class JsltExpression extends SingleInputTypedExpressionDefinition {
 

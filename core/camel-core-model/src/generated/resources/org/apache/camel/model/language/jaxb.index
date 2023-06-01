@@ -10,6 +10,7 @@ Hl7TerserExpression
 JavaScriptExpression
 JoorExpression
 JqExpression
+JsltExpression
 JsonPathExpression
 LanguageExpression
 MethodCallExpression

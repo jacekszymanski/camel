@@ -18,6 +18,7 @@ package org.apache.camel.component.jslt;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
@@ -44,10 +45,13 @@ import com.schibsted.spt.data.jslt.JsltException;
 import com.schibsted.spt.data.jslt.Parser;
 import com.schibsted.spt.data.jslt.filters.DefaultJsonFilter;
 import com.schibsted.spt.data.jslt.filters.JsonFilter;
+
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
 import org.apache.camel.Message;
+import org.apache.camel.Predicate;
 import org.apache.camel.Processor;
+import org.apache.camel.RuntimeCamelException;
 import org.apache.camel.ValidationException;
 import org.apache.camel.WrappedFile;
 import org.apache.camel.support.ExchangeHelper;
@@ -57,7 +61,7 @@ import org.apache.camel.util.ObjectHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class JsltProcessor implements Processor {
+public class JsltProcessor implements Processor, org.apache.camel.Expression, Predicate {
     private static final String URI_PREFIX = "jslt:";
 
     private static final ObjectMapper OBJECT_MAPPER;
@@ -78,6 +82,7 @@ public class JsltProcessor implements Processor {
     private ObjectMapper objectMapper;
     private String resourceUri;
     private CamelContext camelContext;
+    private String expressionText; // only setter, used only for Expression & Predicate
 
     private Collection<Function> functions;
     private JsonFilter objectFilter;
@@ -86,41 +91,16 @@ public class JsltProcessor implements Processor {
 
     @Override
     public void process(Exchange exchange) throws Exception {
-        JsonNode input;
+        String result = applyExpression(exchange);
+        ExchangeHelper.setInOutBodyPatternAware(exchange, result);
+    }
 
-        ObjectMapper objectMapper;
-        if (ObjectHelper.isEmpty(getObjectMapper())) {
-            objectMapper = new ObjectMapper();
-        } else {
-            objectMapper = getObjectMapper();
-        }
-        if (isMapBigDecimalAsFloats()) {
-            objectMapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-        }
-
-        Object body = exchange.getIn().getBody();
-        if (body instanceof WrappedFile) {
-            body = ((WrappedFile<?>) body).getFile();
-        }
-        if (body instanceof String) {
-            input = objectMapper.readTree((String) body);
-        } else if (body instanceof Reader) {
-            input = objectMapper.readTree((Reader) body);
-        } else if (body instanceof File) {
-            input = objectMapper.readTree((File) body);
-        } else if (body instanceof byte[]) {
-            input = objectMapper.readTree((byte[]) body);
-        } else if (body instanceof InputStream) {
-            input = objectMapper.readTree((InputStream) body);
-        } else {
-            throw new ValidationException(exchange, "Allowed body types are String, Reader, File, byte[] or InputStream.");
-        }
-
+    private String applyExpression(Exchange exchange) throws Exception, ValidationException, IOException {
+        JsonNode input = getInputFromExchange(exchange);
         Map<String, JsonNode> variables = extractVariables(exchange);
         JsonNode output = getTransform(exchange.getMessage()).apply(variables, input);
-
         String result = isPrettyPrint() ? output.toPrettyString() : output.toString();
-        ExchangeHelper.setInOutBodyPatternAware(exchange, result);
+        return result;
     }
 
     private synchronized Expression getTransform(Message msg) throws Exception {
@@ -132,14 +112,6 @@ public class JsltProcessor implements Processor {
         if (useTemplateFromUri && transform != null) {
             return transform;
         }
-
-        final Collection<Function> functions = Objects.requireNonNullElse(
-                this.functions,
-                Collections.emptyList());
-
-        final JsonFilter objectFilter = Objects.requireNonNullElse(
-                this.objectFilter,
-                DEFAULT_JSON_FILTER);
 
         final String transformSource;
         final InputStream stream;
@@ -165,11 +137,7 @@ public class JsltProcessor implements Processor {
 
         final Expression transform;
         try {
-            transform = new Parser(new InputStreamReader(stream))
-                    .withFunctions(functions)
-                    .withObjectFilter(objectFilter)
-                    .withSource(transformSource)
-                    .compile();
+            transform = createExpression(stream, transformSource);
         } finally {
             // the stream is consumed only on .compile(), cannot be closed before
             IOHelper.close(stream);
@@ -215,6 +183,81 @@ public class JsltProcessor implements Processor {
             }
         }
         return mapNode;
+    }
+
+    private JsonNode getInputFromExchange(Exchange exchange) throws IOException, ValidationException {
+        final JsonNode input;
+        final ObjectMapper objectMapper;
+
+        if (ObjectHelper.isEmpty(getObjectMapper())) {
+            objectMapper = new ObjectMapper();
+        } else {
+            objectMapper = getObjectMapper();
+        }
+        if (isMapBigDecimalAsFloats()) {
+            objectMapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        }
+
+        Object body = exchange.getIn().getBody();
+        if (body instanceof WrappedFile) {
+            body = ((WrappedFile<?>) body).getFile();
+        }
+        if (body instanceof String) {
+            input = objectMapper.readTree((String) body);
+        } else if (body instanceof Reader) {
+            input = objectMapper.readTree((Reader) body);
+        } else if (body instanceof File) {
+            input = objectMapper.readTree((File) body);
+        } else if (body instanceof byte[]) {
+            input = objectMapper.readTree((byte[]) body);
+        } else if (body instanceof InputStream) {
+            input = objectMapper.readTree((InputStream) body);
+        } else {
+            throw new ValidationException(exchange, "Allowed body types are String, Reader, File, byte[] or InputStream.");
+        }
+
+        return input;
+    }
+
+    private Expression createExpression(final InputStream stream, final String transformSource) {
+        return new Parser(new InputStreamReader(stream))
+                .withFunctions(ensureFunctions())
+                .withObjectFilter(ensureObjectFilter())
+                .withSource(transformSource)
+                .compile();
+    }
+
+    @Override
+    public <T> T evaluate(Exchange exchange, Class<T> type) {
+        final String result;
+        try {
+            result = applyExpression(exchange);
+        } catch (Exception ex) {
+            throw new RuntimeCamelException(ex);
+        }
+
+    }
+
+    @Override
+    public boolean matches(Exchange exchange) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public void init(CamelContext context) {
+        if (expressionText == null) {
+            throw new IllegalArgumentException("expression must be specified");
+        }
+        final InputStream stream = new ByteArrayInputStream(expressionText.getBytes(StandardCharsets.UTF_8));
+        transform = createExpression(stream, "<inline>");
+    }
+
+    private Collection<Function> ensureFunctions() {
+        return Objects.requireNonNullElse(functions, Collections.emptyList());
+    }
+
+    private JsonFilter ensureObjectFilter() {
+        return Objects.requireNonNullElse(objectFilter, DEFAULT_JSON_FILTER);
     }
 
     public ObjectMapper getObjectMapper() {
@@ -292,6 +335,12 @@ public class JsltProcessor implements Processor {
     public String getEndpointUri() {
         return URI_PREFIX + resourceUri;
     }
+
+    public void setExpressionText(String expressionText) {
+        this.expressionText = expressionText;
+    }
+
+
 
     private static class SafeTypesOnlySerializerModifier extends BeanSerializerModifier {
         // Serialize only safe types: primitives, records, serializable objects and

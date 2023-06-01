@@ -33,6 +33,7 @@ import org.apache.camel.model.language.Hl7TerserExpression;
 import org.apache.camel.model.language.JavaScriptExpression;
 import org.apache.camel.model.language.JoorExpression;
 import org.apache.camel.model.language.JqExpression;
+import org.apache.camel.model.language.JsltExpression;
 import org.apache.camel.model.language.JsonPathExpression;
 import org.apache.camel.model.language.LanguageExpression;
 import org.apache.camel.model.language.MethodCallExpression;
@@ -476,6 +477,91 @@ public class ExpressionClauseSupport<T> implements ExpressionFactoryAware, Predi
      */
     public T jq(String text, Class<?> resultType, String headerName, String propertyName) {
         JqExpression exp = new JqExpression(text);
+        exp.setResultType(resultType);
+        exp.setHeaderName(headerName);
+        exp.setPropertyName(propertyName);
+        return expression(exp);
+    }
+
+    /**
+     * Evaluates a <a href="http://camel.apache.org/jslt.html">JSLT expression</a>
+     *
+     * @param  text the expression to be evaluated
+     * @return      the builder to continue processing the DSL
+     */
+    public T jslt(String text) {
+        return expression(new JsltExpression(text));
+    }
+
+    /**
+     * Evaluates <a href="http://camel.apache.org/jslt.html">JQ expression</a>
+     *
+     * @param  text       the expression to be evaluated
+     * @param  resultType the return type expected by the expression
+     * @return            the builder to continue processing the DSL
+     */
+    public T jslt(String text, Class<?> resultType) {
+        JsltExpression exp = new JsltExpression(text);
+        exp.setResultType(resultType);
+        return expression(exp);
+    }
+
+    /**
+     * Evaluates <a href="http://camel.apache.org/jslt.html">JQ expression</a>
+     *
+     * @param  text                 the expression to be evaluated
+     * @param  headerOrPropertyName the name of the header or the property to apply the expression to
+     * @return                      the builder to continue processing the DSL
+     */
+    public T jslt(String text, String headerOrPropertyName) {
+        JsltExpression exp = new JsltExpression(text);
+        exp.setHeaderName(headerOrPropertyName);
+        exp.setPropertyName(headerOrPropertyName);
+        return expression(exp);
+    }
+
+    /**
+     * Evaluates <a href="http://camel.apache.org/jslt.html">JQ expression</a>
+     *
+     * @param  text         the expression to be evaluated
+     * @param  headerName   the name of the header to apply the expression to
+     * @param  propertyName the name of the propertyName to apply the expression to
+     * @return              the builder to continue processing the DSL
+     */
+    public T jslt(String text, String headerName, String propertyName) {
+        JsltExpression exp = new JsltExpression(text);
+        exp.setHeaderName(headerName);
+        exp.setPropertyName(propertyName);
+        return expression(exp);
+    }
+
+    /**
+     * Evaluates <a href="http://camel.apache.org/jslt.html">JQ expression</a>
+     *
+     * @param  text                 the expression to be evaluated
+     * @param  resultType           the return type expected by the expression
+     * @param  headerOrPropertyName the name of the header or the property to apply the expression to
+     * @return                      the builder to continue processing the DSL
+     */
+    public T jslt(String text, Class<?> resultType, String headerOrPropertyName) {
+        JsltExpression exp = new JsltExpression(text);
+        exp.setResultType(resultType);
+        exp.setHeaderName(headerOrPropertyName);
+        exp.setPropertyName(headerOrPropertyName);
+        return expression(exp);
+    }
+
+    /**
+     * Evaluates <a href="http://camel.apache.org/jslt.html">JQ expression</a>
+     *
+     * @param  text         the expression to be evaluated
+     * @param  resultType   the return type expected by the expression
+     * @param  headerName   the name of the header to apply the expression to
+     * @param  propertyName the name of the propertyName to apply the expression to
+     * @return              the builder to continue processing the DSL
+     */
+    public T jslt(String text, Class<?> resultType, String headerName, String propertyName) {
+        JsltExpression exp = new JsltExpression(text);
         exp.setResultType(resultType);
         exp.setHeaderName(headerName);
         exp.setPropertyName(propertyName);

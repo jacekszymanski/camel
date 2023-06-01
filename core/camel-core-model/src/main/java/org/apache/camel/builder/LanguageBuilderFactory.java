@@ -26,6 +26,7 @@ import org.apache.camel.model.language.Hl7TerserExpression;
 import org.apache.camel.model.language.JavaScriptExpression;
 import org.apache.camel.model.language.JoorExpression;
 import org.apache.camel.model.language.JqExpression;
+import org.apache.camel.model.language.JsltExpression;
 import org.apache.camel.model.language.JsonPathExpression;
 import org.apache.camel.model.language.LanguageExpression;
 import org.apache.camel.model.language.MethodCallExpression;
@@ -113,6 +114,11 @@ public final class LanguageBuilderFactory {
      */
     public JqExpression.Builder jq() {
         return new JqExpression.Builder();
+    }
+
+    /** User the Jslt language */
+    public JsltExpression.Builder jslt() {
+        return new JsltExpression.Builder();
     }
 
     /**
